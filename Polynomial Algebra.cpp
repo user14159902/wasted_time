@@ -79,7 +79,9 @@ public:
   void operator () (const std::vector <Mint <mod>>::iterator& first,
                     const std::vector <Mint <mod>>::iterator& last) const {
     const unsigned n = distance(first, last);
-    assert((n & (n - 1)) == 0);
+    if ((n & (n - 1)) != 0) {
+      throw std::logic_error("Distance(first, last) is not a power of 2");
+    }
 
     {
       const unsigned shift = k_ + __builtin_clz(n) - 31U;
@@ -128,7 +130,8 @@ public:
  * n <= 131072 (2^17)
  * 1) Multipoint Evaluation - https://judge.yosupo.jp/submission/121766, 1043 ms
  * 2) Polynomial Interpolation -https://judge.yosupo.jp/submission/121768, 1477 ms
- *
+ * 
+ * note: without precalculated factorials, complexity of InplaceIntegrate() is actually O(n * log(n)) because of division
  * note: all arithmetic operations(+, -, *, /) dont actually care about exact number of coefficients:
  * if leading zeroes appear, they are getting removed immediately. So, when you're asked to output exactly n first coefficients,
  * you should use SetDegree(). However, all functions which require precision as an input argument, do actually return exactly n coefficients.
@@ -149,10 +152,22 @@ public:
   explicit FormalPowerSeries(std::vector <value_type>&& v) noexcept
   : std::vector <value_type>(v) {
   }
+  
+  explicit FormalPowerSeries(const std::vector <value_type>& v)
+  : std::vector <value_type>(v) {
+  }
 
+  /* Same as vector <value_type>(n + 1) : constructs a zero polynomial of degree n.
+   * Might be useful for std::istream& operator >> */
   explicit FormalPowerSeries(unsigned degree)
   : std::vector <value_type>(degree + 1) {
   }
+  
+  FormalPowerSeries(const FormalPowerSeries& rhs) = default;
+  FormalPowerSeries(FormalPowerSeries&& rhs) noexcept = default;
+  FormalPowerSeries& operator = (const FormalPowerSeries& rhs) = default;
+  FormalPowerSeries& operator = (FormalPowerSeries&& rhs) noexcept = default;
+  ~FormalPowerSeries() = default;
 
   [[nodiscard]]
   [[gnu::always_inline]]
@@ -188,7 +203,9 @@ public:
   /* Yields coefficient near x ^ Deg(A(x)) */
   [[nodiscard]]
   value_type Lead() const {
-    assert(!IsZero());
+    if (IsZero()) {
+      throw std::logic_error("No leading coefficient");
+    }
     return this->back();
   }
 
@@ -205,7 +222,6 @@ public:
 
   /* Forced resize */
   void SetDegree(int k) {
-    assert(0 <= k);
     this->resize(k + 1);
   }
 
@@ -632,7 +648,9 @@ public:
     BuildEvaluationTree(begin(tree), begin(x), end(x));
     FPS aux = tree.front().Derivative();
     aux.emplace_back();
-    return aux.Interpolate(begin(tree), begin(y), end(y));
+    auto result = aux.Interpolate(begin(tree), begin(y), end(y));
+    result.SetDegree(n - 1);
+    return result;
   }
 
   [[nodiscard]]
@@ -819,7 +837,7 @@ private:
 
   friend std::array <FPS, 2> DivModNaive(const FPS& lhs, const FPS& rhs) {
     if (rhs.IsZero()) {
-      throw std::logic_error("Do you really need this?");
+      throw std::logic_error("Cannot divide by zero");
     }
 
     if (lhs.IsZero()) {
@@ -847,7 +865,7 @@ private:
 
   friend FPS DivNaive(const FPS& lhs, const FPS& rhs) {
     if (rhs.IsZero()) {
-      throw std::logic_error("Do you really need this?");
+      throw std::logic_error("Cannot divide by zero");
     }
 
     if (lhs.Degree() < rhs.Degree()) {
@@ -871,7 +889,7 @@ private:
 
   friend FPS ModNaive(const FPS& lhs, const FPS& rhs) {
     if (rhs.IsZero()) {
-      throw std::logic_error("Do you really need this?");
+      throw std::logic_error("Cannot divide by zero");
     }
 
     if (lhs.IsZero()) {
@@ -896,7 +914,7 @@ private:
 
   friend std::array <FPS, 2> DivModFFT(const FPS& lhs, const FPS& rhs) {
     if (rhs.IsZero()) {
-      throw std::logic_error("Do you really need this?");
+      throw std::logic_error("Cannot divide by zero");
     }
 
     if (lhs.Degree() < rhs.Degree()) {
@@ -920,7 +938,7 @@ private:
 
   friend FPS DivFFT(const FPS& lhs, const FPS& rhs) {
     if (rhs.IsZero()) {
-      throw std::logic_error("Do you really need this?");
+      throw std::logic_error("Cannot divide by zero");
     }
 
     if (lhs.Degree() < rhs.Degree()) {
@@ -945,7 +963,7 @@ private:
 
   friend FPS ModFFT(const FPS& lhs, const FPS& rhs) {
     if (rhs.IsZero()) {
-      throw std::logic_error("Do you really need this?");
+      throw std::logic_error("Cannot divide by zero");
     }
 
     if (lhs.Degree() < rhs.Degree()) {
