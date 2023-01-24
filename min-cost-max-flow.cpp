@@ -7,7 +7,7 @@ public:
   public:
     Edge() = default;
     Edge(int from, int to,
-         CostType cost, FlowType capacity)
+         FlowType capacity, CostType cost)
     : from_(from),
       to_(to),
       cost_(cost),
@@ -15,259 +15,266 @@ public:
     }
 
     [[nodiscard]]
-    inline int GetFrom() const {
-      return from_;
-    }
-
-    [[nodiscard]]
-    inline int GetTo() const {
-      return to_;
-    }
-
-    [[nodiscard]]
-    inline FlowType GetFlow() const {
-      return flow_;
-    }
-
-    [[nodiscard]]
-    inline FlowType GetCapacity() const {
-      return capacity_;
-    }
-
-    [[nodiscard]]
-    inline FlowType GetPotential() const {
+    inline FlowType GetRemainingFlow() const {
       return capacity_ - flow_;
     }
 
     [[nodiscard]]
     inline CostType GetCost() const {
-      return cost_;
+      return cost_ - potential_;
     }
 
-    inline void AddFlow(const FlowType& increment) {
-      flow_ += increment;
+    void ApplyPotential(const CostType& from_potential,
+                        const CostType& to_potential) {
+      CostType delta = from_potential - to_potential;
+      cost_ += delta;
+      potential_ += delta;
     }
 
-    int from_;
-    int to_;
-    CostType cost_;
+    int from_{};
+    int to_{};
     FlowType flow_{};
     FlowType capacity_;
+    CostType cost_;
+    CostType potential_{};
   };
 
-  MinCostMaxFlowNetwork() = delete;
   MinCostMaxFlowNetwork(int start, int terminal,
                         int vertices, int edges = -1)
- : start_(start),
-   terminal_(terminal),
-   n_(vertices),
-   adj_(vertices),
-   sp_distance_(vertices),
-   sp_previous_edge_(vertices) {
+  : start_(start),
+    terminal_(terminal),
+    n_(vertices),
+    adj_(vertices),
+    used_(vertices),
+    sp_distance_(vertices),
+    sp_weighted_distance_(vertices),
+    sp_previous_edge_(vertices) {
     if (edges != -1) {
       edges_.reserve(edges * 2);
     }
   }
 
-  inline int AddEdge(int from, int to, CostType cost, FlowType cap) {
+  int AddEdge(int from, int to, FlowType cap, CostType cost) {
     edges_alive_ += 1;
-    edges_.emplace_back(from, to, cost, cap);
+    edges_.emplace_back(from, to, cap, cost);
     adj_[from].emplace_back(ssize(edges_) - 1);
-    edges_.emplace_back(to, from, -cost, 0);
+    edges_.emplace_back(to, from, 0, -cost);
     adj_[to].emplace_back(ssize(edges_) - 1);
     return adj_[from].back();
   }
 
-  std::pair <FlowType, CostType> MCMF() {
-    FlowType total_flow = 0;
-    CostType total_cost = 0;
-
-    std::vector <CostType> potentials(n_);
-
-    {
-      std::vector <int> order(ssize(edges_) / 2);
-      std::iota(begin(order), end(order), 0);
-      std::shuffle(begin(order), end(order), std::mt19937(std::chrono::steady_clock::now().time_since_epoch().count()));
-
-      while (true) {
-        bool relaxation = false;
-        for (const int& id : order) {
-          const Edge& e = edges_[id * 2];
-          if (potentials[e.to_] > potentials[e.from_] + e.cost_) {
-            relaxation = true;
-            potentials[e.to_] = potentials[e.from_] + e.cost_;
-          }
-        }
-        if (!relaxation) {
-          break;
-        }
-      }
-
-      ApplyPotentials(potentials);
-    }
-
-    while (Dijkstra()) {
-      FlowType pushed = std::numeric_limits<FlowType>::max();
-
-      {
-        int id;
-        int current_node = terminal_;
-        while (current_node != start_) {
-          id = sp_previous_edge_[current_node];
-          const Edge& e = edges_[id];
-          pushed = std::min(pushed, e.GetPotential());
-          current_node = e.from_;
-        }
-      }
-
-      {
-        int id;
-        int current_node = terminal_;
-        while (current_node != start_) {
-          id = sp_previous_edge_[current_node];
-          Edge& e = edges_[id];
-          Edge& e_rev = edges_[id ^ 1];
-
-          e.AddFlow(pushed);
-          if (e.GetPotential() == 0) {
-            edges_alive_ -= 1;
-          }
-          if (e_rev.GetPotential() == 0) {
-            edges_alive_ += 1;
-          }
-          e_rev.AddFlow(-pushed);
-
-          total_cost += pushed * (e.cost_ - potentials[e.from_] + potentials[e.to_]);
-          current_node = e.from_;
-        }
-      }
-
-      total_flow += pushed;
-      for (int i = 0; i < n_; ++i) {
-        if (sp_distance_[i] == std::numeric_limits <CostType>::max()) {
-          sp_distance_[i] = 0;
-        }
-        potentials[i] += sp_distance_[i];
-      }
-
-      ApplyPotentials(sp_distance_);
-    }
-
-    return {total_flow, total_cost};
+  [[nodiscard]]
+  const Edge& GetEdge(int id) const {
+    return edges_[id];
   }
 
-private:
   void DenseDijkstra() {
-    std::vector <char> used_(n_);
-    auto Relax = [&](const int& node) -> void {
-      used_[node] = true;
-      for (const int& id : adj_[node]) {
-        const Edge& e = edges_[id];
-        if (e.GetPotential() > 0 && sp_distance_[e.to_] > sp_distance_[e.from_] + e.cost_) {
-          sp_previous_edge_[e.to_] = id;
-          sp_distance_[e.to_] = sp_distance_[e.from_] + e.cost_;
-        }
+    for (int i = 0; i < n_; ++i) {
+      int cheapest_node = 0;
+      while (used_[cheapest_node]) {
+        cheapest_node += 1;
       }
-    };
 
-    Relax(0);
-    int first_unused = 1;
-    while (first_unused < n_) {
-      int cheapest_node = first_unused;
-      CostType min_cost = sp_distance_[cheapest_node];
+      CostType min_cost = sp_weighted_distance_[cheapest_node];
       for (int j = cheapest_node + 1; j < n_; ++j) {
         if (used_[j]) {
           continue;
         }
-        if (sp_distance_[j] < min_cost) {
+        if (sp_weighted_distance_[j] < min_cost) {
           cheapest_node = j;
-          min_cost = sp_distance_[j];
+          min_cost = sp_weighted_distance_[j];
         }
       }
 
-      if (sp_distance_[cheapest_node] == std::numeric_limits <CostType>::max()) {
+      used_[cheapest_node] = true;
+      if (sp_weighted_distance_[cheapest_node] == std::numeric_limits <CostType>::max()) {
         break;
       }
 
-      Relax(cheapest_node);
-      if (cheapest_node == first_unused) {
-        while (first_unused < n_ && used_[first_unused]) {
-          first_unused += 1;
+      for (const int& id : adj_[cheapest_node]) {
+        const Edge& e = edges_[id];
+        if (e.GetRemainingFlow() > 0
+        && sp_weighted_distance_[e.to_] > sp_weighted_distance_[e.from_] + e.cost_) {
+          sp_previous_edge_[e.to_] = id;
+          sp_distance_[e.to_] = sp_distance_[e.from_] + 1;
+          sp_weighted_distance_[e.to_] = sp_weighted_distance_[e.from_] + e.cost_;
         }
       }
     }
+
+    std::fill(begin(used_), end(used_), 0);
   }
 
   void SparseDijkstra() {
-    std::priority_queue <std::pair <CostType, int>, std::vector <std::pair <CostType, int>>, std::greater<>> heap;
+    heap_.emplace(0, start_);
+    while (!heap_.empty()) {
+      const auto [distance, node] = heap_.top();
+      heap_.pop();
 
-    heap.emplace(0, start_);
-    while (!heap.empty()) {
-      auto [dist, node] = heap.top();
-      heap.pop();
-      if (dist != sp_distance_[node]) {
+      if (sp_weighted_distance_[node] != distance) {
         continue;
       }
 
       for (const int& id : adj_[node]) {
         const Edge& e = edges_[id];
-        if (e.GetPotential() > 0 &&
-            sp_distance_[e.to_] > sp_distance_[node] + e.cost_) {
+        if (e.GetRemainingFlow() > 0
+        && sp_weighted_distance_[e.to_] > sp_weighted_distance_[e.from_] + e.cost_) {
           sp_previous_edge_[e.to_] = id;
-          sp_distance_[e.to_] = sp_distance_[node] + e.cost_;
-          heap.emplace(sp_distance_[e.to_], e.to_);
+          sp_distance_[e.to_] = sp_distance_[e.from_] + 1;
+          sp_weighted_distance_[e.to_] = sp_weighted_distance_[e.from_] + e.cost_;
+          heap_.emplace(sp_weighted_distance_[e.to_], e.to_);
         }
       }
     }
-
   }
 
   bool Dijkstra() {
-    std::fill(begin(sp_distance_), end(sp_distance_), std::numeric_limits <CostType>::max());
-    sp_distance_[start_] = 0;
+    if (edges_alive_ == 0) {
+      return false;
+    }
 
-    long long evaluate_dense = (long long)n_ * n_;
-    long long evaluate_sparse = (long long)edges_alive_ * std::__lg(edges_alive_) * 4;
+    std::fill(begin(sp_weighted_distance_), end(sp_weighted_distance_), std::numeric_limits <CostType>::max());
+    sp_weighted_distance_[start_] = sp_distance_[start_] = 0;
 
-    if (evaluate_dense < evaluate_sparse) {
+    long long dense_evaluation = static_cast <long long>(n_) * n_;
+    long long sparse_evaluation = static_cast <long long>(edges_alive_) * std::__lg(edges_alive_);
+    if (dense_evaluation < sparse_evaluation) {
       DenseDijkstra();
     } else {
       SparseDijkstra();
     }
+    SparseDijkstra();
 
-    return sp_distance_[terminal_] != std::numeric_limits <CostType>::max();
+    return sp_weighted_distance_[terminal_] != std::numeric_limits <CostType>::max();
   }
 
-  void ApplyPotentials(const std::vector <CostType>& potentials) {
+  void ApplyPotentials() {
     for (Edge& e : edges_) {
-      e.cost_ += potentials[e.from_] - potentials[e.to_];
+      e.ApplyPotential(sp_weighted_distance_[e.from_], sp_weighted_distance_[e.to_]);
     }
   }
 
-  int n_;
-  int edges_alive_{};
-  std::vector <Edge> edges_;
-  std::vector <CostType> sp_distance_;
-  std::vector <int> sp_previous_edge_;
-  std::vector <std::vector <int>> adj_;
+  std::pair <FlowType, CostType> MinCostMaxFlow() {
+    FlowType max_flow = 0;
+    FlowType min_cost = 0;
 
+    bool negative_edge = false;
+    for (int i = 0; i < ssize(edges_); i += 2) {
+      if (edges_[i].cost_ < 0) {
+        negative_edge = true;
+        break;
+      }
+    }
+
+    if (negative_edge) {
+      std::vector <int> order(size(edges_));
+      std::iota(begin(order), end(order), 0);
+      std::shuffle(begin(order), end(order), std::forward <std::mt19937>(std::mt19937(std::chrono::steady_clock::now().time_since_epoch().count())));
+
+      bool relaxation = true;
+      while (relaxation) {
+        relaxation = false;
+        for (const int& id : order) {
+          const Edge& e = edges_[id];
+          if (sp_weighted_distance_[e.to_] > sp_weighted_distance_[e.from_] + e.cost_) {
+            relaxation = true;
+            sp_weighted_distance_[e.to_] = sp_weighted_distance_[e.from_] + e.cost_;
+          }
+        }
+      }
+
+      ApplyPotentials();
+    }
+
+    std::vector <int> path;
+    while (Dijkstra()) {
+      path.reserve(sp_distance_[terminal_]);
+      FlowType pushed = std::numeric_limits <FlowType>::max();
+
+      {
+        int id;
+        int current_node = terminal_;
+        while (current_node != start_) {
+          id = sp_previous_edge_[current_node];
+          path.push_back(id);
+          current_node = edges_[id].from_;
+          pushed = std::min(pushed, edges_[id].GetRemainingFlow());
+        }
+      }
+
+      max_flow += pushed;
+      for (const int& id : path) {
+        Edge& e = edges_[id];
+        Edge& e_rev = edges_[id ^ 1];
+
+        e.flow_ += pushed;
+        e_rev.flow_ -= pushed;
+        if (e.flow_ == e.capacity_) {
+          edges_alive_ -= 1;
+        }
+        if (e_rev.flow_ == e_rev.capacity_ - pushed) {
+          edges_alive_ += 1;
+        }
+        min_cost += pushed * e.GetCost();
+      }
+
+      path.clear();
+      std::for_each(begin(sp_weighted_distance_), end(sp_weighted_distance_),
+                    [&](CostType& c) {
+        if (c == std::numeric_limits <CostType>::max()) {
+          c = 0;
+        }
+      });
+      ApplyPotentials();
+    }
+
+    return {max_flow, min_cost};
+  }
+
+  int n_;
   const int start_;
   const int terminal_;
+
+  std::vector <Edge> edges_;
+  std::vector <std::vector <int>> adj_;
+
+  /* Dijkstra stuff*/
+  int edges_alive_{};
+  std::vector <char> used_;
+  std::vector <int> sp_distance_;
+  std::vector <int> sp_previous_edge_;
+  std::vector <CostType> sp_weighted_distance_;
+  std::priority_queue <std::pair <CostType, int>, std::vector <std::pair <CostType, int>>, std::greater<>> heap_;
 };
 
 void RunCase() {
-  int n, m;
-  std::cin >> n >> m;
+  int n;
+  std::cin >> n;
 
-  MinCostMaxFlowNetwork <int, long long> network(0, n - 1, n, m);
-  for (int i = 0; i < m; ++i) {
-    int from, to, cap, cost;
-    std::cin >> from >> to >> cap >> cost;
-    --from; --to;
-    network.AddEdge(from, to, cost, cap);
+  MinCostMaxFlowNetwork <int, long long> network(2 * n, 2 * n + 1, 2 * n + 2, n * (n + 2));
+  for (int i = 0; i < n; ++i) {
+    network.AddEdge(2 * n, i * 2, 1, 0);
+    network.AddEdge(i * 2 + 1, 2 * n + 1, 1, 0);
   }
 
-  std::cout << network.MCMF().second << "\n";
+  std::vector <std::vector <int>> edge(n, std::vector <int> (n));
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      int cost;
+      std::cin >> cost;
+      edge[i][j] = network.AddEdge(i * 2, j * 2 + 1, 1, cost);
+    }
+  }
+
+  auto [flow, cost] = network.MinCostMaxFlow();
+  std::cout << cost << "\n";
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < n; ++j) {
+      if (network.GetEdge(edge[i][j]).flow_ == 1) {
+        std::cout << i + 1 << " " << j + 1 << "\n";
+      }
+    }
+  }
 }
 
 int main() {
