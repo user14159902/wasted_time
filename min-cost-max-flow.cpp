@@ -1,11 +1,8 @@
 #include <bits/stdc++.h>
 
-template <typename T, typename U>
+template <typename FlowType, typename CostType>
 class MinCostMaxFlowNetwork {
 public:
-  using FlowType = T;
-  using CostType = U;
-
   class Edge {
   public:
     Edge() = default;
@@ -58,6 +55,7 @@ public:
     FlowType capacity_;
   };
 
+  MinCostMaxFlowNetwork() = delete;
   MinCostMaxFlowNetwork(int start, int terminal,
                         int vertices, int edges = -1)
  : start_(start),
@@ -72,6 +70,7 @@ public:
   }
 
   inline int AddEdge(int from, int to, CostType cost, FlowType cap) {
+    edges_alive_ += 1;
     edges_.emplace_back(from, to, cost, cap);
     adj_[from].emplace_back(ssize(edges_) - 1);
     edges_.emplace_back(to, from, -cost, 0);
@@ -127,8 +126,17 @@ public:
         while (current_node != start_) {
           id = sp_previous_edge_[current_node];
           Edge& e = edges_[id];
+          Edge& e_rev = edges_[id ^ 1];
+
           e.AddFlow(pushed);
-          BackEdge(id).AddFlow(-pushed);
+          if (e.GetPotential() == 0) {
+            edges_alive_ -= 1;
+          }
+          if (e_rev.GetPotential() == 0) {
+            edges_alive_ += 1;
+          }
+          e_rev.AddFlow(-pushed);
+
           total_cost += pushed * (e.cost_ - potentials[e.from_] + potentials[e.to_]);
           current_node = e.from_;
         }
@@ -149,14 +157,54 @@ public:
   }
 
 private:
-  bool Dijkstra() {
-    std::fill(begin(sp_distance_), end(sp_distance_), std::numeric_limits <T>::max());
-    sp_distance_[start_] = 0;
+  void DenseDijkstra() {
+    std::vector <char> used_(n_);
+    auto Relax = [&](const int& node) -> void {
+      used_[node] = true;
+      for (const int& id : adj_[node]) {
+        const Edge& e = edges_[id];
+        if (e.GetPotential() > 0 && sp_distance_[e.to_] > sp_distance_[e.from_] + e.cost_) {
+          sp_previous_edge_[e.to_] = id;
+          sp_distance_[e.to_] = sp_distance_[e.from_] + e.cost_;
+        }
+      }
+    };
 
-    heap_.emplace(0, start_);
-    while (!heap_.empty()) {
-      auto [dist, node] = heap_.top();
-      heap_.pop();
+    Relax(0);
+    int first_unused = 1;
+    while (first_unused < n_) {
+      int cheapest_node = first_unused;
+      CostType min_cost = sp_distance_[cheapest_node];
+      for (int j = cheapest_node + 1; j < n_; ++j) {
+        if (used_[j]) {
+          continue;
+        }
+        if (sp_distance_[j] < min_cost) {
+          cheapest_node = j;
+          min_cost = sp_distance_[j];
+        }
+      }
+
+      if (sp_distance_[cheapest_node] == std::numeric_limits <CostType>::max()) {
+        break;
+      }
+
+      Relax(cheapest_node);
+      if (cheapest_node == first_unused) {
+        while (first_unused < n_ && used_[first_unused]) {
+          first_unused += 1;
+        }
+      }
+    }
+  }
+
+  void SparseDijkstra() {
+    std::priority_queue <std::pair <CostType, int>, std::vector <std::pair <CostType, int>>, std::greater<>> heap;
+
+    heap.emplace(0, start_);
+    while (!heap.empty()) {
+      auto [dist, node] = heap.top();
+      heap.pop();
       if (dist != sp_distance_[node]) {
         continue;
       }
@@ -167,16 +215,27 @@ private:
             sp_distance_[e.to_] > sp_distance_[node] + e.cost_) {
           sp_previous_edge_[e.to_] = id;
           sp_distance_[e.to_] = sp_distance_[node] + e.cost_;
-          heap_.emplace(sp_distance_[e.to_], e.to_);
+          heap.emplace(sp_distance_[e.to_], e.to_);
         }
       }
     }
 
-    return sp_distance_[terminal_] != std::numeric_limits <T>::max();
   }
 
-  Edge& BackEdge(int id) {
-    return edges_[id ^ 1];
+  bool Dijkstra() {
+    std::fill(begin(sp_distance_), end(sp_distance_), std::numeric_limits <CostType>::max());
+    sp_distance_[start_] = 0;
+
+    long long evaluate_dense = (long long)n_ * n_;
+    long long evaluate_sparse = (long long)edges_alive_ * std::__lg(edges_alive_) * 4;
+
+    if (evaluate_dense < evaluate_sparse) {
+      DenseDijkstra();
+    } else {
+      SparseDijkstra();
+    }
+
+    return sp_distance_[terminal_] != std::numeric_limits <CostType>::max();
   }
 
   void ApplyPotentials(const std::vector <CostType>& potentials) {
@@ -186,11 +245,11 @@ private:
   }
 
   int n_;
+  int edges_alive_{};
   std::vector <Edge> edges_;
   std::vector <CostType> sp_distance_;
-  std::vector <CostType> sp_previous_edge_;
+  std::vector <int> sp_previous_edge_;
   std::vector <std::vector <int>> adj_;
-  std::priority_queue <std::pair <CostType, int>, std::vector <std::pair <CostType, int>>, std::greater<>> heap_;
 
   const int start_;
   const int terminal_;
