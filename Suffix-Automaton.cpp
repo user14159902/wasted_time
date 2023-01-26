@@ -28,7 +28,7 @@ public:
   };
 
   [[nodiscard]]
-  std::optional <const Node&> GetNode(size_t id) const {
+  std::optional <Node> GetNode(size_t id) const {
     if (id <= nodes_count_) {
       return aut_[id];
     }
